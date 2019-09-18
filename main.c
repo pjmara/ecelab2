@@ -12,6 +12,7 @@
  * You include the header associated with that file(s)
  * into the main file of your project. */
 #include "peripherals.h"
+#include <string.h>
 
 // Function Prototypes
 void swDelay(char numLoops);
@@ -19,12 +20,20 @@ void runtimerA2(void);
 void stoptimerA2(int reset);
 void configUserLEDs(char inbits);
 void timerDelay(unsigned long int);
+void configButtons();
+char returnState();
+char* numberToNote(char note);
+int noteToPitch(char* note);
+void playNote(char* note);
+char noteToLED(char* note);
+bool correctPress(unsigned char inbits);
 // Declare globals here
 
-enum state{INITIAL_SCREEN, GENERATE_LEVEL, DRAW_SCREEN, CHECK_KEYPAD, GAME_CONDITIONS, COUNTDOWN, GAME_CONDITION};
+enum state{INITIAL_SCREEN, COUNTDOWN, PLAY_SONG, PLAY_NOTE};
 unsigned long int timer_cnt;
 unsigned int timer_reset = 60000;
 unsigned long int startTime = 0, endTime = 0;
+
 
 // Main
 void main(void)
@@ -34,9 +43,7 @@ void main(void)
     //enable interrupts:
     _BIS_SR(GIE);
 
-    timer_cnt = 0;
-    enum state currentState = INITIAL_SCREEN;
-    unsigned char currKey=0, dispSz = 3;
+
 
 
 
@@ -51,36 +58,62 @@ void main(void)
     configUserLEDs(0);
     initLeds();
     runtimerA2();
+    configButtons();
+    int x = noteToPitch("A");
     Graphics_clearDisplay(&g_sContext); // Clear the display
+
+    enum state currentState = INITIAL_SCREEN;
+    unsigned char currKey=0, currLED = 0x00, dispSz = 3;
+    int numCorrect = 0;
+    int numWrong = 0;
+    timer_cnt = 0;
+
+    bool over = false;
+    bool alreadyHitCorrect = false;
+    int currentNoteIndex = 0;
+    int songLength = 43;
+
+    char twinkle[][3] = {"A", "A", "E", "E", "F", "F", "E", "D", "D", "C", "C", "B", "B", "A", "E", "E","D", "D", "C", "C", "B", "E", "E","D", "D", "C", "C", "B", "A", "A", "E", "E", "F", "F", "E", "D", "D", "C", "C", "B", "B", "A"};
+    int duration[] = {500, 500, 500, 500, 500, 500, 1000, 500, 500, 500, 500, 500, 500, 1000, 500, 500, 500, 500, 500, 500, 1000, 500, 500, 500, 500, 500, 500, 1000, 500, 500, 500, 500, 500, 500, 1000, 500, 500, 500, 500, 500, 500, 1000};
     while (1)    // Forever loop
     {
 
         switch(currentState){
         case INITIAL_SCREEN:
+            Graphics_clearDisplay(&g_sContext); // Clear the display
+            numCorrect = 0;
+            numWrong = 0;
+            // Write some text to the display
+            Graphics_drawStringCentered(&g_sContext, "Welcome", AUTO_STRING_LENGTH, 48, 35, TRANSPARENT_TEXT);
+            Graphics_drawStringCentered(&g_sContext, "to", AUTO_STRING_LENGTH, 48, 45, TRANSPARENT_TEXT);
+            Graphics_drawStringCentered(&g_sContext, "MSP430 Hero", AUTO_STRING_LENGTH, 48, 55, TRANSPARENT_TEXT);
+            Graphics_drawStringCentered(&g_sContext, "* to Start", AUTO_STRING_LENGTH, 48, 65, TRANSPARENT_TEXT);
 
 
-                // Write some text to the display
-                Graphics_drawStringCentered(&g_sContext, "Welcome", AUTO_STRING_LENGTH, 48, 35, TRANSPARENT_TEXT);
-                Graphics_drawStringCentered(&g_sContext, "to", AUTO_STRING_LENGTH, 48, 45, TRANSPARENT_TEXT);
-                Graphics_drawStringCentered(&g_sContext, "MSP430 Hero", AUTO_STRING_LENGTH, 48, 55, TRANSPARENT_TEXT);
-                Graphics_drawStringCentered(&g_sContext, "* to Start", AUTO_STRING_LENGTH, 48, 65, TRANSPARENT_TEXT);
+            // Draw a box around everything because it looks nice
+            Graphics_Rectangle box = {.xMin = 5, .xMax = 91, .yMin = 5, .yMax = 91 };
+            Graphics_drawRectangle(&g_sContext, &box);
 
+            // We are now done writing to the display.  However, if we stopped here, we would not
+            // see any changes on the actual LCD.  This is because we need to send our changes
+            // to the LCD, which then refreshes the display.
+            // Since this is a slow operation, it is best to refresh (or "flush") only after
+            // we are done drawing everything we need.
+            Graphics_flushBuffer(&g_sContext);
+            currKey = getKey();
+            if (currKey == '*'){
+                currentState = COUNTDOWN;
+            }
 
-                // Draw a box around everything because it looks nice
-                Graphics_Rectangle box = {.xMin = 5, .xMax = 91, .yMin = 5, .yMax = 91 };
-                Graphics_drawRectangle(&g_sContext, &box);
+            currKey=0, currLED = 0x00, dispSz = 3;
+            numCorrect = 0;
+            numWrong = 0;
+            timer_cnt = 0;
+            over = false;
+            alreadyHitCorrect = false;
+            currentNoteIndex = 0;
 
-                // We are now done writing to the display.  However, if we stopped here, we would not
-                // see any changes on the actual LCD.  This is because we need to send our changes
-                // to the LCD, which then refreshes the display.
-                // Since this is a slow operation, it is best to refresh (or "flush") only after
-                // we are done drawing everything we need.
-                Graphics_flushBuffer(&g_sContext);
-                currKey = getKey();
-                if (currKey == '*'){
-                    currentState = COUNTDOWN;
-                }
-                break;
+            break;
         case COUNTDOWN:
             BuzzerOnCustom(74-1);
             Graphics_clearDisplay(&g_sContext); // Clear the display
@@ -119,8 +152,53 @@ void main(void)
             BuzzerOff();
 
             Graphics_clearDisplay(&g_sContext); // Clear the display
-            currentState = INITIAL_SCREEN;
+            currentState = PLAY_SONG;
+
+        case PLAY_SONG:
+
+            playNote(twinkle[currentNoteIndex]);
+            currLED = noteToLED(twinkle[currentNoteIndex]);
+            setLeds(currLED);
+            startTime = timer_cnt;
+            endTime = timer_cnt + duration[currentNoteIndex]/5;
+            endTime = endTime % timer_reset;
+            over = false;
+            alreadyHitCorrect = false;
+            currentState = PLAY_NOTE;
+
+        case PLAY_NOTE:
+            if(endTime <= timer_cnt){
+                over = true;
+            }
+            if (correctPress(currLED)  && !alreadyHitCorrect){
+                numCorrect++;
+                alreadyHitCorrect = true;
+                Graphics_clearDisplay(&g_sContext); // Clear the display
+
+                char cor[15];
+                sprintf(cor, "%d",numCorrect);
+                Graphics_drawStringCentered(&g_sContext, cor, AUTO_STRING_LENGTH, 48, 45, TRANSPARENT_TEXT);
+
+                Graphics_flushBuffer(&g_sContext);
+                //BuzzerOff();
+            }
+            if(over){
+                if (!alreadyHitCorrect) {
+                    numWrong ++;
+                }
+                BuzzerOff();
+                currentNoteIndex++;
+                if (currentNoteIndex < songLength)
+                    currentState = PLAY_SONG;
+                else
+                    currentState = INITIAL_SCREEN;
+            }
+
+
         }
+
+
+
 
 
 
@@ -149,7 +227,140 @@ void main(void)
 
     }  // end while (1)
 }
+char* numberToNote(char note) {
+    if (note == '1') {
+        return "A";
+    }
+    else if (note == '2') {
+        return "Bb";
+    }
+    else if (note == '3') {
+        return "B";
+    }
+    else if (note == '4') {
+        return "C";
+    }
+    else if (note == '5') {
+        return "C#";
+    }
+    else if (note == '6') {
+        return "D";
+    }
+    else if (note == '7') {
+        return "Eb";
+    }
+    else if (note == '8') {
+        return "E";
+    }
+    else if (note == '9') {
+        return "F";
+    }
+    else if (note == '*') {
+        return "F#";
+    }
+    else if (note == '0') {
+        return "G";
+    }
+    else if (note == '#') {
+        return "Ab";
+    }
+    return "\0";
+}
 
+int noteToPitch(char* note) {
+    if (strcmp(note, "A") == 0) {
+        return (int) 32767/440;
+    }
+    else if (strcmp(note, "Bb") == 0) {
+        return (int) 32767/466;
+    }
+    else if (strcmp(note, "B") == 0) {
+        return (int) 32767/494;
+    }
+    else if (strcmp(note, "C") == 0) {
+        return (int) 32767/523;
+    }
+    else if (strcmp(note, "C#") == 0) {
+        return (int) 32767/554;
+    }
+    else if (strcmp(note, "D") == 0) {
+        return (int) 32767/587;
+    }
+    else if (strcmp(note, "Eb") == 0) {
+        return (int) 32767/622;
+    }
+    else if (strcmp(note, "E") == 0) {
+        return (int) 32767/659;
+    }
+    else if (strcmp(note, "F") == 0) {
+        return (int) 32767/698;
+    }
+    else if (strcmp(note, "F#") == 0) {
+        return (int) 32767/740;
+    }
+    else if (strcmp(note, "G") == 0) {
+        return (int) 32767/784;
+    }
+    else if (strcmp(note, "Ab") == 0) {
+        return (int) 32767/831;
+    }
+    return 0;
+}
+
+char noteToLED(char* note) {
+    if (strcmp(note, "A") == 0) {
+        return 0x08;
+    }
+    else if (strcmp(note, "Bb") == 0) {
+        return 0x08;
+    }
+    else if (strcmp(note, "B") == 0) {
+        return 0x08;
+    }
+    else if (strcmp(note, "C") == 0) {
+        return 0x04;
+    }
+    else if (strcmp(note, "C#") == 0) {
+        return 0x04;
+    }
+    else if (strcmp(note, "D") == 0) {
+        return 0x04;
+    }
+    else if (strcmp(note, "Eb") == 0) {
+        return 0x02;
+    }
+    else if (strcmp(note, "E") == 0) {
+        return 0x02;
+    }
+    else if (strcmp(note, "F") == 0) {
+        return 0x02;
+    }
+    else if (strcmp(note, "F#") == 0) {
+        return 0x01;
+    }
+    else if (strcmp(note, "G") == 0) {
+        return 0x01;
+    }
+    else if (strcmp(note, "Ab") == 0) {
+        return 0x01;
+    }
+    return 0;
+}
+
+bool correctPress(unsigned char inbits) {
+    if (returnState() == inbits) {
+        return true;
+    }
+    else
+        return false;
+
+}
+
+
+
+void playNote(char* note) {
+    BuzzerOnCustom(noteToPitch(note));
+}
 
 void runtimerA2(void) {
     // This function configures and starts Timer A2
@@ -205,6 +416,39 @@ void configUserLEDs(char inbits) {
     P4DIR = P4DIR | (BIT7);
     P1DIR = P1DIR | (BIT0);
 
+}
+
+char returnState(){
+    unsigned char mask = 0;
+    if(~P2IN & BIT2){
+        mask |= BIT1;
+    }
+    if(~P3IN & BIT6){
+        mask |= BIT2;
+    }
+    if(~P7IN & BIT0){
+        mask |= BIT3;
+    }
+    if(~P7IN & BIT4){
+        mask |= BIT0;
+    }
+    return mask;
+}
+
+
+void configButtons() {
+    P7SEL = P7SEL & (BIT1|BIT2|BIT3|BIT5|BIT6|BIT7);
+    P3SEL = P3SEL & (BIT1|BIT2|BIT3|BIT5|BIT0|BIT7|BIT4);
+    P2SEL = P2SEL & (BIT1|BIT6|BIT3|BIT5|BIT0|BIT7|BIT4);
+    P7DIR = P7DIR & (BIT1|BIT2|BIT3|BIT5|BIT6|BIT7);
+    P3DIR = P3DIR & (BIT1|BIT2|BIT3|BIT5|BIT0|BIT7|BIT4);
+    P2DIR = P2DIR & (BIT1|BIT6|BIT3|BIT5|BIT0|BIT7|BIT4);
+    P7REN = P7REN | (BIT0|BIT4);
+    P7OUT = P7OUT | (BIT0|BIT4);
+    P3REN = P3REN | (BIT6);
+    P3OUT = P3OUT | (BIT6);
+    P2REN = P2REN | (BIT2);
+    P2OUT = P2OUT | (BIT2);
 }
 
 void swDelay(char numLoops)
