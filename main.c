@@ -29,7 +29,7 @@ char noteToLED(char* note);
 bool correctPress(unsigned char inbits);
 // Declare globals here
 
-enum state{INITIAL_SCREEN, COUNTDOWN, PLAY_SONG, PLAY_NOTE};
+enum state{INITIAL_SCREEN, COUNTDOWN, PLAY_SONG, PLAY_NOTE, GAME_OVER, WIN};
 unsigned long int timer_cnt;
 unsigned int timer_reset = 60000;
 unsigned long int startTime = 0, endTime = 0;
@@ -73,14 +73,16 @@ void main(void)
     int currentNoteIndex = 0;
     int songLength = 43;
 
-    char twinkle[][3] = {"A", "A", "E", "E", "F", "F", "E", "D", "D", "C", "C", "B", "B", "A", "E", "E","D", "D", "C", "C", "B", "E", "E","D", "D", "C", "C", "B", "A", "A", "E", "E", "F", "F", "E", "D", "D", "C", "C", "B", "B", "A"};
+    char cor[15];
+    char twinkle[][3] = {"A", "A", "E", "E", "F", "F", "Eb", "D", "D", "C#", "C#", "B", "B", "A", "E", "E","D", "D", "C", "C", "B", "E", "E","D", "D", "C#", "C#", "B", "A", "A", "E", "E", "F", "F", "Eb", "D", "D", "C", "C", "B", "B", "A"};
     int duration[] = {500, 500, 500, 500, 500, 500, 1000, 500, 500, 500, 500, 500, 500, 1000, 500, 500, 500, 500, 500, 500, 1000, 500, 500, 500, 500, 500, 500, 1000, 500, 500, 500, 500, 500, 500, 1000, 500, 500, 500, 500, 500, 500, 1000};
+    Graphics_clearDisplay(&g_sContext); // Clear the display
     while (1)    // Forever loop
     {
 
         switch(currentState){
         case INITIAL_SCREEN:
-            Graphics_clearDisplay(&g_sContext); // Clear the display
+
             numCorrect = 0;
             numWrong = 0;
             // Write some text to the display
@@ -153,6 +155,7 @@ void main(void)
 
             Graphics_clearDisplay(&g_sContext); // Clear the display
             currentState = PLAY_SONG;
+            break;
 
         case PLAY_SONG:
 
@@ -165,22 +168,19 @@ void main(void)
             over = false;
             alreadyHitCorrect = false;
             currentState = PLAY_NOTE;
+            break;
 
         case PLAY_NOTE:
+            Graphics_clearDisplay(&g_sContext); // Clear the display
+            sprintf(cor, "%d",numWrong);
+            Graphics_drawStringCentered(&g_sContext, cor, AUTO_STRING_LENGTH, 48, 45, TRANSPARENT_TEXT);
+            Graphics_flushBuffer(&g_sContext);
             if(endTime <= timer_cnt){
                 over = true;
             }
             if (correctPress(currLED)  && !alreadyHitCorrect){
                 numCorrect++;
                 alreadyHitCorrect = true;
-                Graphics_clearDisplay(&g_sContext); // Clear the display
-
-                char cor[15];
-                sprintf(cor, "%d",numCorrect);
-                Graphics_drawStringCentered(&g_sContext, cor, AUTO_STRING_LENGTH, 48, 45, TRANSPARENT_TEXT);
-
-                Graphics_flushBuffer(&g_sContext);
-                //BuzzerOff();
             }
             if(over){
                 if (!alreadyHitCorrect) {
@@ -188,14 +188,54 @@ void main(void)
                 }
                 BuzzerOff();
                 currentNoteIndex++;
-                if (currentNoteIndex < songLength)
+                if (currentNoteIndex < songLength){
                     currentState = PLAY_SONG;
-                else
-                    currentState = INITIAL_SCREEN;
+                }
+
+                else{
+                    currentState = WIN;
+                }
+
+
+            }
+            if(numWrong >= songLength/2){
+                currentState = GAME_OVER;
+                BuzzerOnCustom(45);
+                timerDelay(2000);
+                BuzzerOff();
             }
 
+            break;
+
+        case GAME_OVER:
+            Graphics_clearDisplay(&g_sContext); // Clear the display
+            sprintf(cor, "%d",numCorrect);
+            Graphics_drawStringCentered(&g_sContext, "You are no", AUTO_STRING_LENGTH, 48, 35, TRANSPARENT_TEXT);
+            Graphics_drawStringCentered(&g_sContext, "Guitar Hero", AUTO_STRING_LENGTH, 48, 55, TRANSPARENT_TEXT);
+            Graphics_flushBuffer(&g_sContext);
+            setLeds(0x00);
+            currentState = INITIAL_SCREEN;
+            setLeds(0x08);
+            timerDelay(5000);
+            Graphics_clearDisplay(&g_sContext); // Clear the display
+            break;
+
+        case WIN:
+            Graphics_clearDisplay(&g_sContext); // Clear the display
+            Graphics_drawStringCentered(&g_sContext, "Congratulations!", AUTO_STRING_LENGTH, 48, 35, TRANSPARENT_TEXT);
+            Graphics_drawStringCentered(&g_sContext, "Guitar Hero", AUTO_STRING_LENGTH, 48, 55, TRANSPARENT_TEXT);
+            Graphics_flushBuffer(&g_sContext);
+            setLeds(0x00);
+            currentState = INITIAL_SCREEN;
+            setLeds(0x01);
+            timerDelay(5000);
+            Graphics_clearDisplay(&g_sContext); // Clear the display
+            break;
 
         }
+
+
+
 
 
 
@@ -391,10 +431,10 @@ __interrupt void TimerA2_ISR (void) {
         timer_cnt++;
         if (timer_cnt >= timer_reset)
             timer_cnt = 0;
-        if (timer_cnt%200==0) { // blink LEDs once a second
-            P1OUT = P1OUT ^ BIT0;
-            P4OUT ^= BIT7;
-        }
+//        if (timer_cnt%200==0) { // blink LEDs once a second
+//            P1OUT = P1OUT ^ BIT0;
+//            P4OUT ^= BIT7;
+//        }
 }
 
 void timerDelay(unsigned long int ms){
@@ -449,6 +489,27 @@ void configButtons() {
     P3OUT = P3OUT | (BIT6);
     P2REN = P2REN | (BIT2);
     P2OUT = P2OUT | (BIT2);
+}
+
+void BuzzerOnCustom(int ticks)
+{
+    // Initialize PWM output on P3.5, which corresponds to TB0.5
+    P3SEL |= BIT5; // Select peripheral output mode for P3.5
+    P3DIR |= BIT5;
+
+    TB0CTL  = (TBSSEL__ACLK|ID__1|MC__UP);  // Configure Timer B0 to use ACLK, divide by 1, up mode
+    TB0CTL  &= ~TBIE;                       // Explicitly Disable timer interrupts for safety
+
+    // Now configure the timer period, which controls the PWM period
+    // Doing this with a hard coded values is NOT the best method
+    // We do it here only as an example. You will fix this in Lab 2.
+    TB0CCR0   = ticks;                    // Set the PWM period in ACLK ticks
+    TB0CCTL0 &= ~CCIE;                  // Disable timer interrupts
+
+    // Configure CC register 5, which is connected to our PWM pin TB0.5
+    TB0CCTL5  = OUTMOD_7;                   // Set/reset mode for PWM
+    TB0CCTL5 &= ~CCIE;                      // Disable capture/compare interrupts
+    TB0CCR5   = TB0CCR0/2;                  // Configure a 50% duty cycle
 }
 
 void swDelay(char numLoops)
